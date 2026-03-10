@@ -14,7 +14,7 @@ if IS_WEB:
 
 
 WIDTH, HEIGHT = 410, 640
-FPS = 60
+FPS = 50 if IS_WEB else 60
 RECORD_FILE = "records.json"
 MAX_RECORDS = 10
 
@@ -172,6 +172,8 @@ class Enemy:
 
 
 class Pickup:
+    _label_font = None
+
     def __init__(self, x, y, kind):
         self.x = x
         self.y = y
@@ -200,8 +202,9 @@ class Pickup:
             label = "+H"
         pygame.draw.circle(screen, outer, (int(self.x), int(self.y)), r)
         pygame.draw.circle(screen, inner, (int(self.x), int(self.y)), max(6, r - 4))
-        font = pygame.font.SysFont("consolas", 14, bold=True)
-        txt = font.render(label, True, (30, 35, 45))
+        if Pickup._label_font is None:
+            Pickup._label_font = pygame.font.SysFont("consolas", 14, bold=True)
+        txt = Pickup._label_font.render(label, True, (30, 35, 45))
         screen.blit(txt, (int(self.x - txt.get_width() / 2), int(self.y - txt.get_height() / 2)))
 
 
@@ -332,7 +335,8 @@ class Game:
         self.sfx_enabled = True
         self.dragging_slider = None
 
-        self.setup_audio()
+        if not IS_WEB:
+            self.setup_audio()
 
         self.title_font = pygame.font.SysFont("microsoftyaheiui", 48, bold=True)
         self.h1_font = pygame.font.SysFont("microsoftyaheiui", 24, bold=True)
@@ -340,8 +344,9 @@ class Game:
         self.small_font = pygame.font.SysFont("consolas", 18)
         self.small_font_cjk = pygame.font.SysFont("microsoftyaheiui", 20)
 
-        star_count = 56 if IS_WEB else 90
-        big_star_count = 14 if IS_WEB else 24
+        self.bg_base = self.build_bg_base()
+        star_count = 36 if IS_WEB else 90
+        big_star_count = 10 if IS_WEB else 24
         self.stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(35, 180)] for _ in range(star_count)]
         self.big_stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(12, 28)] for _ in range(big_star_count)]
 
@@ -689,24 +694,27 @@ class Game:
         else:
             self.enemy_bullets.append(Bullet(enemy.x, enemy.y + 16, base_speed, 11, False, vx=random.uniform(-12, 12)))
 
-    def draw_background(self):
+    def build_bg_base(self):
         grad = pygame.Surface((WIDTH, HEIGHT))
         for y in range(HEIGHT):
             r = int(8 + 14 * y / HEIGHT)
             g = int(22 + 16 * y / HEIGHT)
             b = int(42 + 24 * y / HEIGHT)
             pygame.draw.line(grad, (r, g, b), (0, y), (WIDTH, y))
-        self.screen.blit(grad, (0, 0))
+
+        glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        pygame.draw.ellipse(glow, (55, 125, 180, 60), (-160, -120, 520, 320))
+        pygame.draw.ellipse(glow, (255, 150, 90, 35), (WIDTH - 340, HEIGHT - 200, 360, 250))
+        grad.blit(glow, (0, 0))
+        return grad
+
+    def draw_background(self):
+        self.screen.blit(self.bg_base, (0, 0))
 
         for x, y, speed in self.stars:
             pygame.draw.circle(self.screen, (220, 235, 255), (int(x), int(y)), 1)
         for x, y, speed in self.big_stars:
             pygame.draw.circle(self.screen, (190, 215, 255), (int(x), int(y)), 2)
-
-        glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        pygame.draw.ellipse(glow, (55, 125, 180, 60), (-160, -120, 520, 320))
-        pygame.draw.ellipse(glow, (255, 150, 90, 35), (WIDTH - 340, HEIGHT - 200, 360, 250))
-        self.screen.blit(glow, (0, 0))
 
     def update_stars(self, dt):
         for s in self.stars:
@@ -725,8 +733,9 @@ class Game:
 
         center_x = WIDTH // 2
         wobble = int(math.sin(self.time * 2.3) * 6)
-        title = self.title_font.render("SKY STRIKE", True, (240, 248, 255))
-        shadow = self.title_font.render("SKY STRIKE", True, (70, 110, 160))
+        title_text = self.tr("飞机大战", "SKY STRIKE")
+        title = self.title_font.render(title_text, True, (240, 248, 255))
+        shadow = self.title_font.render(title_text, True, (70, 110, 160))
         self.screen.blit(shadow, (center_x - title.get_width() // 2 + 3, 120 + wobble + 3))
         self.screen.blit(title, (center_x - title.get_width() // 2, 120 + wobble))
 
@@ -780,7 +789,7 @@ class Game:
         home_surf = pygame.Surface((self.home_button.width, self.home_button.height), pygame.SRCALPHA)
         pygame.draw.circle(home_surf, (92, 104, 124, 195), (29, 29), 29)
         pygame.draw.circle(home_surf, (218, 236, 255, 200), (29, 29), 29, width=2)
-        h_text = self.small_font.render("HOME", True, (242, 248, 255))
+        h_text = self.render_small(self.tr("主页", "HOME"), (242, 248, 255))
         home_surf.blit(h_text, (29 - h_text.get_width() // 2, 29 - h_text.get_height() // 2))
         self.screen.blit(home_surf, self.home_button.topleft)
 
@@ -788,8 +797,8 @@ class Game:
         pause_surf = pygame.Surface((self.pause_button.width, self.pause_button.height), pygame.SRCALPHA)
         pygame.draw.circle(pause_surf, (95, 120, 165, 195), (29, 29), 29)
         pygame.draw.circle(pause_surf, (218, 236, 255, 200), (29, 29), 29, width=2)
-        pause_label = "PLAY" if self.state == "paused" else "PAUSE"
-        p_text = self.small_font.render(pause_label, True, (242, 248, 255))
+        pause_label = self.tr("继续", "PLAY") if self.state == "paused" else self.tr("暂停", "PAUSE")
+        p_text = self.render_small(pause_label, (242, 248, 255))
         pause_surf.blit(p_text, (29 - p_text.get_width() // 2, 29 - p_text.get_height() // 2))
         self.screen.blit(pause_surf, self.pause_button.topleft)
 
@@ -842,10 +851,10 @@ class Game:
         for i in range(rows):
             rec = self.history[start + i]
             rank = start + i + 1
-            if IS_WEB:
-                text = f"{rank}. score {rec['score']}  kill {rec['kills']}  {rec['time']}s"
-            else:
-                text = f"{rank}. 分{rec['score']}  击落{rec['kills']}  生存{rec['time']}s"
+            text = self.tr(
+                f"{rank}. 分{rec['score']}  击落{rec['kills']}  生存{rec['time']}s",
+                f"{rank}. score {rec['score']}  kill {rec['kills']}  {rec['time']}s",
+            )
             line = self.render_small(text, (220, 235, 255))
             self.screen.blit(line, (panel.left + 10, panel.top + 28 + i * 20))
         self.screen.set_clip(old_clip)
@@ -901,7 +910,7 @@ class Game:
         self.screen.blit(tm_text, (right - tm_text.get_width(), 90))
 
         if self.combo > 1 and self.combo_t > 0:
-            combo_text = self.h1_font.render(f"COMBO x{self.combo}", True, (255, 195, 120))
+            combo_text = self.h1_font.render(self.tr(f"连击 x{self.combo}", f"COMBO x{self.combo}"), True, (255, 195, 120))
             self.screen.blit(combo_text, (WIDTH // 2 - combo_text.get_width() // 2, 105))
 
         boss = self.get_alive_boss()
@@ -909,7 +918,7 @@ class Game:
             pygame.draw.rect(self.screen, (55, 45, 56), (28, 112, WIDTH - 56, 10), border_radius=5)
             ratio = max(0.0, boss.hp / boss.max_hp)
             pygame.draw.rect(self.screen, (235, 92, 122), (28, 112, int((WIDTH - 56) * ratio), 10), border_radius=5)
-            boss_text = self.small_font.render("BOSS", True, (255, 220, 220))
+            boss_text = self.render_small(self.tr("首领", "BOSS"), (255, 220, 220))
             self.screen.blit(boss_text, (WIDTH // 2 - boss_text.get_width() // 2, 108))
 
     def handle_events(self):
@@ -1301,7 +1310,7 @@ class Game:
         mask.fill((12, 8, 10, alpha))
         self.screen.blit(mask, (0, 0))
 
-        title = self.title_font.render("GAME OVER", True, (255, 185, 155))
+        title = self.title_font.render(self.tr("游戏结束", "GAME OVER"), True, (255, 185, 155))
         self.screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 170))
 
         lines = [
@@ -1323,7 +1332,7 @@ class Game:
         mask.fill((8, 10, 18, 165))
         self.screen.blit(mask, (0, 0))
 
-        title = self.title_font.render("PAUSED", True, (230, 240, 255))
+        title = self.title_font.render(self.tr("已暂停", "PAUSED"), True, (230, 240, 255))
         self.screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 220))
         tip = self.h1_font.render(self.tr("按 P 继续，按 H 返回菜单", "Press P to resume, H for menu"), True, (210, 224, 245))
         self.screen.blit(tip, (WIDTH // 2 - tip.get_width() // 2, 300))
