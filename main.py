@@ -211,7 +211,7 @@ class Player:
         self.y = HEIGHT - 90
         self.w = 40
         self.h = 46
-        self.speed = 1800
+        self.speed = 380
         self.max_hp = 100
         self.hp = self.max_hp
         self.attack = 14
@@ -318,6 +318,7 @@ class Game:
         pygame.display.set_caption("飞机大战 - 无尽模式")
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
+        self.audio_ready = False
         self.music_started = False
         self.bgm_channel = None
         self.bgm_sound = None
@@ -331,20 +332,7 @@ class Game:
         self.sfx_enabled = True
         self.dragging_slider = None
 
-        try:
-            if not pygame.mixer.get_init():
-                pygame.mixer.init(frequency=22050, size=-16, channels=1)
-            self.bgm_sound = self.create_bgm_sound()
-            self.sfx_button = self.create_tone_sound(920, 0.08, 2400)
-            self.sfx_kill = self.create_tone_sound(420, 0.12, 3600, 760)
-            self.sfx_hurt = self.create_tone_sound(180, 0.14, 4200, 120)
-            self.sfx_boss = self.create_tone_sound(120, 0.45, 4300, 260)
-        except pygame.error:
-            self.bgm_sound = None
-            self.sfx_button = None
-            self.sfx_kill = None
-            self.sfx_hurt = None
-            self.sfx_boss = None
+        self.setup_audio()
 
         self.title_font = pygame.font.SysFont("microsoftyaheiui", 48, bold=True)
         self.h1_font = pygame.font.SysFont("microsoftyaheiui", 24, bold=True)
@@ -352,8 +340,10 @@ class Game:
         self.small_font = pygame.font.SysFont("consolas", 18)
         self.small_font_cjk = pygame.font.SysFont("microsoftyaheiui", 20)
 
-        self.stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(35, 180)] for _ in range(90)]
-        self.big_stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(12, 28)] for _ in range(24)]
+        star_count = 56 if IS_WEB else 90
+        big_star_count = 14 if IS_WEB else 24
+        self.stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(35, 180)] for _ in range(star_count)]
+        self.big_stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(12, 28)] for _ in range(big_star_count)]
 
         self.running = True
         self.state = "menu"
@@ -384,9 +374,57 @@ class Game:
 
         self.reset_game()
 
+    def set_touch_from_finger(self, fx, fy):
+        # Pygame finger coordinates are normalized to [0, 1].
+        self.touch_pos = (int(fx * WIDTH), int(fy * HEIGHT))
+
+    def try_touch_action(self, pos):
+        if self.home_button.collidepoint(pos):
+            self.play_button_sfx()
+            self.save_current_run_if_needed()
+            self.state = "menu"
+            self.stop_bgm()
+            self.touch_active = False
+            self.set_bgm_paused(False)
+            return True
+        if self.pause_button.collidepoint(pos):
+            self.play_button_sfx()
+            self.state = "playing" if self.state == "paused" else "paused"
+            self.set_bgm_paused(self.state == "paused")
+            return True
+        if self.state == "playing" and self.skill_button.collidepoint(pos):
+            self.play_button_sfx()
+            self.cast_emp()
+            return True
+        return False
+
+    def setup_audio(self):
+        if self.audio_ready:
+            return
+        try:
+            if not pygame.mixer.get_init():
+                # Use a lighter mixer config on web to improve startup speed.
+                if IS_WEB:
+                    pygame.mixer.init(frequency=11025, size=-16, channels=1)
+                else:
+                    pygame.mixer.init(frequency=22050, size=-16, channels=1)
+            self.bgm_sound = self.create_bgm_sound()
+            self.sfx_button = self.create_tone_sound(920, 0.08, 2400)
+            self.sfx_kill = self.create_tone_sound(420, 0.12, 3600, 760)
+            self.sfx_hurt = self.create_tone_sound(180, 0.14, 4200, 120)
+            self.sfx_boss = self.create_tone_sound(120, 0.45, 4300, 260)
+            self.audio_ready = True
+        except pygame.error:
+            self.bgm_sound = None
+            self.sfx_button = None
+            self.sfx_kill = None
+            self.sfx_hurt = None
+            self.sfx_boss = None
+            self.audio_ready = False
+
     def create_bgm_sound(self):
-        sample_rate = 22050
-        duration = 8.0
+        sample_rate = 11025 if IS_WEB else 22050
+        duration = 5.0 if IS_WEB else 8.0
         total = int(sample_rate * duration)
         notes = {
             "C4": 261.63,
@@ -448,6 +486,7 @@ class Game:
         return pygame.mixer.Sound(buffer=buf.tobytes())
 
     def ensure_bgm(self):
+        self.setup_audio()
         if self.music_started or self.bgm_sound is None or not self.bgm_enabled:
             return
         try:
@@ -970,21 +1009,7 @@ class Game:
                         self.state = "menu"
                         self.stop_bgm()
                 elif self.state in ("playing", "paused"):
-                    if self.home_button.collidepoint(event.pos):
-                        self.play_button_sfx()
-                        self.save_current_run_if_needed()
-                        self.state = "menu"
-                        self.stop_bgm()
-                        self.touch_active = False
-                        self.set_bgm_paused(False)
-                    elif self.pause_button.collidepoint(event.pos):
-                        self.play_button_sfx()
-                        self.state = "playing" if self.state == "paused" else "paused"
-                        self.set_bgm_paused(self.state == "paused")
-                    elif self.state == "playing" and self.skill_button.collidepoint(event.pos):
-                        self.play_button_sfx()
-                        self.cast_emp()
-                    elif self.state == "playing":
+                    if not self.try_touch_action(event.pos) and self.state == "playing":
                         self.touch_active = True
                         self.touch_pos = event.pos
                 elif self.state == "game_over":
@@ -1019,6 +1044,68 @@ class Game:
                     self.history_page = min(max_page, self.history_page + 1)
                 elif event.y > 0:
                     self.history_page = max(0, self.history_page - 1)
+            elif event.type == pygame.FINGERDOWN:
+                pos = (int(event.x * WIDTH), int(event.y * HEIGHT))
+                if self.state in ("playing", "paused"):
+                    if not self.try_touch_action(pos) and self.state == "playing":
+                        self.touch_active = True
+                        self.set_touch_from_finger(event.x, event.y)
+                elif self.state == "menu":
+                    # Menu keeps click-driven behavior; finger taps map to button checks.
+                    if self.start_button.collidepoint(pos):
+                        self.play_button_sfx()
+                        self.state = "playing"
+                        self.reset_game()
+                        self.ensure_bgm()
+                    elif self.quit_button.collidepoint(pos):
+                        self.play_button_sfx()
+                        self.running = False
+                    elif self.settings_button.collidepoint(pos):
+                        self.play_button_sfx()
+                        self.state = "settings"
+                    elif self.history_panel_rect.collidepoint(pos):
+                        self.history_dragging = True
+                        self.history_drag_start_y = pos[1]
+                elif self.state == "settings":
+                    if self.bgm_toggle_button.collidepoint(pos):
+                        self.play_button_sfx()
+                        self.bgm_enabled = not self.bgm_enabled
+                        self.apply_audio_settings()
+                    elif self.sfx_toggle_button.collidepoint(pos):
+                        self.play_button_sfx()
+                        self.sfx_enabled = not self.sfx_enabled
+                    elif self.bgm_slider_rect.collidepoint(pos):
+                        self.dragging_slider = "bgm"
+                        self.update_slider_by_x("bgm", pos[0])
+                    elif self.sfx_slider_rect.collidepoint(pos):
+                        self.dragging_slider = "sfx"
+                        self.update_slider_by_x("sfx", pos[0])
+                    elif self.settings_back_button.collidepoint(pos):
+                        self.play_button_sfx()
+                        self.state = "menu"
+                        self.stop_bgm()
+            elif event.type == pygame.FINGERMOTION:
+                if self.state == "playing" and self.touch_active:
+                    self.set_touch_from_finger(event.x, event.y)
+                elif self.state == "settings" and self.dragging_slider is not None:
+                    self.update_slider_by_x(self.dragging_slider, int(event.x * WIDTH))
+            elif event.type == pygame.FINGERUP:
+                if self.state == "playing":
+                    self.touch_active = False
+                elif self.state == "settings":
+                    self.dragging_slider = None
+                elif self.state == "menu" and self.history_dragging:
+                    if self.history_drag_start_y is not None:
+                        dy = int(event.y * HEIGHT) - self.history_drag_start_y
+                        max_page = max(0, math.ceil(len(self.history) / self.history_page_size) - 1)
+                        if dy <= -24:
+                            self.history_page = min(max_page, self.history_page + 1)
+                            self.play_button_sfx()
+                        elif dy >= 24:
+                            self.history_page = max(0, self.history_page - 1)
+                            self.play_button_sfx()
+                    self.history_dragging = False
+                    self.history_drag_start_y = None
 
     def cast_emp(self):
         if self.player.skill_t > 0:
