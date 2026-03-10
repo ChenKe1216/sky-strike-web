@@ -211,7 +211,7 @@ class Player:
         self.y = HEIGHT - 90
         self.w = 40
         self.h = 46
-        self.speed = 380
+        self.speed = 1800
         self.max_hp = 100
         self.hp = self.max_hp
         self.attack = 14
@@ -315,7 +315,7 @@ class Player:
 class Game:
     def __init__(self):
         pygame.init()
-        pygame.display.set_caption("Sky Strike - Endless" if IS_WEB else "飞机大战 - 无尽模式")
+        pygame.display.set_caption("飞机大战 - 无尽模式")
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
         self.music_started = False
@@ -346,19 +346,11 @@ class Game:
             self.sfx_hurt = None
             self.sfx_boss = None
 
-        if IS_WEB:
-            # Built-in font is the safest choice in browser runtimes.
-            self.title_font = pygame.font.Font(None, 68)
-            self.h1_font = pygame.font.Font(None, 36)
-            self.ui_font = pygame.font.Font(None, 30)
-            self.small_font = pygame.font.Font(None, 26)
-            self.small_font_cjk = self.ui_font
-        else:
-            self.title_font = pygame.font.SysFont("microsoftyaheiui", 48, bold=True)
-            self.h1_font = pygame.font.SysFont("microsoftyaheiui", 24, bold=True)
-            self.ui_font = pygame.font.SysFont("microsoftyaheiui", 22)
-            self.small_font = pygame.font.SysFont("consolas", 18)
-            self.small_font_cjk = pygame.font.SysFont("microsoftyaheiui", 20)
+        self.title_font = pygame.font.SysFont("microsoftyaheiui", 48, bold=True)
+        self.h1_font = pygame.font.SysFont("microsoftyaheiui", 24, bold=True)
+        self.ui_font = pygame.font.SysFont("microsoftyaheiui", 22)
+        self.small_font = pygame.font.SysFont("consolas", 18)
+        self.small_font_cjk = pygame.font.SysFont("microsoftyaheiui", 20)
 
         self.stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(35, 180)] for _ in range(90)]
         self.big_stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(12, 28)] for _ in range(24)]
@@ -388,7 +380,7 @@ class Game:
         self.history_dragging = False
 
         self.history = self.load_history()
-        self.ascii_ui = IS_WEB
+        self.ascii_ui = False
 
         self.reset_game()
 
@@ -1079,15 +1071,10 @@ class Game:
         self.player.update(dt, keys)
         if self.touch_active:
             tx, ty = self.touch_pos
-            dx = tx - self.player.x
-            dy = ty - self.player.y
-            dist = math.hypot(dx, dy)
-            if dist > 1:
-                step = min(dist, self.player.speed * dt)
-                self.player.x += dx / dist * step
-                self.player.y += dy / dist * step
-                self.player.x = max(28, min(WIDTH - 28, self.player.x))
-                self.player.y = max(38, min(HEIGHT - 30, self.player.y))
+            self.player.x = tx
+            self.player.y = ty
+            self.player.x = max(28, min(WIDTH - 28, self.player.x))
+            self.player.y = max(38, min(HEIGHT - 30, self.player.y))
 
         self.spawn_cd = max(0.2, 0.78 - self.survive_time * 0.012)
         self.spawn_t -= dt
