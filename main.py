@@ -3,11 +3,12 @@ import json
 import os
 import random
 import sys
+from array import array
 from dataclasses import dataclass
 
 import pygame
 
-IS_WEB = sys.platform == "emscripten"
+IS_WEB = sys.platform in ("emscripten", "wasi") or hasattr(sys, "_emscripten_info")
 if IS_WEB:
     import asyncio
 
@@ -15,7 +16,7 @@ if IS_WEB:
 WIDTH, HEIGHT = 410, 640
 FPS = 60
 RECORD_FILE = "records.json"
-MAX_RECORDS = 8
+MAX_RECORDS = 10
 
 
 @dataclass
@@ -45,9 +46,10 @@ class Particle:
 
 
 class Bullet:
-    def __init__(self, x, y, vy, dmg, friendly=True):
+    def __init__(self, x, y, vy, dmg, friendly=True, vx=0.0):
         self.x = x
         self.y = y
+        self.vx = vx
         self.vy = vy
         self.dmg = dmg
         self.friendly = friendly
@@ -59,8 +61,9 @@ class Bullet:
         return pygame.Rect(self.x - self.radius, self.y - self.radius, self.radius * 2, self.radius * 2)
 
     def update(self, dt):
+        self.x += self.vx * dt
         self.y += self.vy * dt
-        if self.y < -30 or self.y > HEIGHT + 30:
+        if self.y < -30 or self.y > HEIGHT + 30 or self.x < -40 or self.x > WIDTH + 40:
             self.alive = False
 
     def draw(self, screen):
@@ -82,23 +85,56 @@ class Bullet:
 
 
 class Enemy:
-    def __init__(self, level=1):
-        self.w = random.randint(36, 54)
-        self.h = random.randint(28, 40)
+    def __init__(self, level=1, kind="fighter", is_boss=False):
+        self.kind = kind
+        self.is_boss = is_boss
+        self.fire_mode = "single"
         self.x = random.randint(30, WIDTH - 30)
-        self.y = random.randint(-200, -40)
-        self.speed = random.uniform(135, 210) + level * 4.4
-        self.max_hp = random.randint(24, 44) + level * 3
+        self.y = random.randint(-220, -40)
+
+        if is_boss:
+            self.w = 96
+            self.h = 74
+            self.speed = 60 + level * 1.5
+            self.max_hp = 920 + level * 52
+            self.shoot_cd = 0.72
+            self.fire_mode = "boss"
+        elif kind == "scout":
+            self.w = random.randint(30, 40)
+            self.h = random.randint(22, 30)
+            self.speed = random.uniform(195, 260) + level * 4.8
+            self.max_hp = random.randint(14, 24) + level * 2
+            self.shoot_cd = random.uniform(0.95, 1.45)
+            self.fire_mode = "fast"
+        elif kind == "tank":
+            self.w = random.randint(52, 66)
+            self.h = random.randint(38, 50)
+            self.speed = random.uniform(90, 130) + level * 3.2
+            self.max_hp = random.randint(52, 76) + level * 5
+            self.shoot_cd = random.uniform(1.35, 1.95)
+            self.fire_mode = "dual"
+        else:
+            self.w = random.randint(38, 54)
+            self.h = random.randint(30, 42)
+            self.speed = random.uniform(130, 188) + level * 4.2
+            self.max_hp = random.randint(24, 44) + level * 3
+            self.shoot_cd = random.uniform(1.0, 1.7)
+            self.fire_mode = "single"
+
         self.hp = self.max_hp
-        self.shoot_cd = random.uniform(1.0, 1.9)
         self.shoot_t = random.uniform(0.2, 1.5)
         self.alive = True
+        self.phase = random.random() * math.tau
 
     @property
     def rect(self):
         return pygame.Rect(int(self.x - self.w / 2), int(self.y - self.h / 2), self.w, self.h)
 
     def update(self, dt):
+        self.phase += dt
+        if self.is_boss:
+            self.x += math.sin(self.phase * 1.6) * 42 * dt
+            self.x = max(66, min(WIDTH - 66, self.x))
         self.y += self.speed * dt
         self.shoot_t -= dt
         if self.y > HEIGHT + 60:
@@ -106,16 +142,30 @@ class Enemy:
 
     def draw(self, screen):
         body = self.rect
-        pygame.draw.polygon(
-            screen,
-            (220, 75, 80),
-            [
-                (body.centerx, body.top),
-                (body.right, body.centery + 6),
-                (body.centerx, body.bottom),
-                (body.left, body.centery + 6),
-            ],
-        )
+        if self.is_boss:
+            color = (188, 68, 88)
+            wing = (226, 110, 128)
+            pygame.draw.rect(screen, color, body, border_radius=8)
+            pygame.draw.polygon(screen, wing, [(body.left - 18, body.centery + 8), (body.left + 8, body.top + 14), (body.left + 8, body.bottom - 4)])
+            pygame.draw.polygon(screen, wing, [(body.right + 18, body.centery + 8), (body.right - 8, body.top + 14), (body.right - 8, body.bottom - 4)])
+            pygame.draw.circle(screen, (255, 212, 120), (body.centerx, body.centery), 7)
+        else:
+            if self.kind == "scout":
+                color = (255, 120, 98)
+            elif self.kind == "tank":
+                color = (196, 80, 120)
+            else:
+                color = (220, 75, 80)
+            pygame.draw.polygon(
+                screen,
+                color,
+                [
+                    (body.centerx, body.top),
+                    (body.right, body.centery + 6),
+                    (body.centerx, body.bottom),
+                    (body.left, body.centery + 6),
+                ],
+            )
         hp_ratio = max(0.0, self.hp / self.max_hp)
         pygame.draw.rect(screen, (45, 30, 40), (body.left, body.top - 8, body.width, 4), border_radius=2)
         pygame.draw.rect(screen, (255, 160, 120), (body.left, body.top - 8, int(body.width * hp_ratio), 4), border_radius=2)
@@ -265,14 +315,50 @@ class Player:
 class Game:
     def __init__(self):
         pygame.init()
-        pygame.display.set_caption("飞机大战 - 无尽模式")
+        pygame.display.set_caption("Sky Strike - Endless" if IS_WEB else "飞机大战 - 无尽模式")
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
+        self.music_started = False
+        self.bgm_channel = None
+        self.bgm_sound = None
+        self.sfx_button = None
+        self.sfx_kill = None
+        self.sfx_hurt = None
+        self.sfx_boss = None
+        self.bgm_volume = 0.24
+        self.sfx_volume = 0.42
+        self.bgm_enabled = True
+        self.sfx_enabled = True
+        self.dragging_slider = None
 
-        self.title_font = pygame.font.SysFont("microsoftyaheiui", 48, bold=True)
-        self.h1_font = pygame.font.SysFont("microsoftyaheiui", 24, bold=True)
-        self.ui_font = pygame.font.SysFont("microsoftyaheiui", 22)
-        self.small_font = pygame.font.SysFont("consolas", 18)
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(frequency=22050, size=-16, channels=1)
+            self.bgm_sound = self.create_bgm_sound()
+            self.sfx_button = self.create_tone_sound(920, 0.08, 2400)
+            self.sfx_kill = self.create_tone_sound(420, 0.12, 3600, 760)
+            self.sfx_hurt = self.create_tone_sound(180, 0.14, 4200, 120)
+            self.sfx_boss = self.create_tone_sound(120, 0.45, 4300, 260)
+        except pygame.error:
+            self.bgm_sound = None
+            self.sfx_button = None
+            self.sfx_kill = None
+            self.sfx_hurt = None
+            self.sfx_boss = None
+
+        if IS_WEB:
+            # Built-in font is the safest choice in browser runtimes.
+            self.title_font = pygame.font.Font(None, 68)
+            self.h1_font = pygame.font.Font(None, 36)
+            self.ui_font = pygame.font.Font(None, 30)
+            self.small_font = pygame.font.Font(None, 26)
+            self.small_font_cjk = self.ui_font
+        else:
+            self.title_font = pygame.font.SysFont("microsoftyaheiui", 48, bold=True)
+            self.h1_font = pygame.font.SysFont("microsoftyaheiui", 24, bold=True)
+            self.ui_font = pygame.font.SysFont("microsoftyaheiui", 22)
+            self.small_font = pygame.font.SysFont("consolas", 18)
+            self.small_font_cjk = pygame.font.SysFont("microsoftyaheiui", 20)
 
         self.stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(35, 180)] for _ in range(90)]
         self.big_stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(12, 28)] for _ in range(24)]
@@ -282,15 +368,191 @@ class Game:
         self.time = 0.0
         self.menu_flash = 0.0
 
-        self.start_button = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 20, 200, 52)
-        self.quit_button = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 86, 200, 46)
+        self.start_button = pygame.Rect(WIDTH // 2 - 100, 280, 200, 52)
+        self.quit_button = pygame.Rect(WIDTH // 2 - 100, 344, 200, 46)
+        self.settings_button = pygame.Rect(WIDTH // 2 - 100, 400, 200, 42)
         self.skill_button = pygame.Rect(WIDTH - 78, HEIGHT - 78, 58, 58)
+        self.pause_button = pygame.Rect(WIDTH - 144, HEIGHT - 78, 58, 58)
+        self.home_button = pygame.Rect(20, HEIGHT - 78, 58, 58)
+        self.settings_back_button = pygame.Rect(WIDTH // 2 - 90, HEIGHT - 88, 180, 44)
+        self.bgm_toggle_button = pygame.Rect(42, 246, WIDTH - 84, 44)
+        self.sfx_toggle_button = pygame.Rect(42, 306, WIDTH - 84, 44)
+        self.bgm_slider_rect = pygame.Rect(42, 392, WIDTH - 84, 12)
+        self.sfx_slider_rect = pygame.Rect(42, 448, WIDTH - 84, 12)
         self.touch_active = False
         self.touch_pos = (WIDTH // 2, HEIGHT - 90)
+        self.history_page = 0
+        self.history_page_size = 2
+        self.history_panel_rect = pygame.Rect(0, 0, 0, 0)
+        self.history_drag_start_y = None
+        self.history_dragging = False
 
         self.history = self.load_history()
+        self.ascii_ui = IS_WEB
 
         self.reset_game()
+
+    def create_bgm_sound(self):
+        sample_rate = 22050
+        duration = 8.0
+        total = int(sample_rate * duration)
+        notes = {
+            "C4": 261.63,
+            "E4": 329.63,
+            "G4": 392.00,
+            "A3": 220.00,
+            "F4": 349.23,
+            "D4": 293.66,
+            "B3": 246.94,
+        }
+        progression = [
+            [notes["A3"], notes["C4"], notes["E4"]],
+            [notes["F4"], notes["A3"], notes["C4"]],
+            [notes["D4"], notes["F4"], notes["A3"]],
+            [notes["G4"], notes["B3"], notes["D4"]],
+        ]
+
+        melody = [notes["E4"], notes["G4"], notes["A3"], notes["C4"], notes["D4"], notes["F4"], notes["E4"], notes["C4"]]
+
+        buf = array("h")
+        beat_len = 0.25
+        rng = random.Random(42)
+        for i in range(total):
+            t = i / sample_rate
+            chord = progression[int(t // 2) % len(progression)]
+            beat_idx = int(t / beat_len)
+            lead = melody[beat_idx % len(melody)]
+            lead_gate = 1.0 - ((t % beat_len) / beat_len)
+            kick = 0.62 * math.exp(-30 * (t % 0.5)) * math.sin(2 * math.pi * (72 - 12 * (t % 0.5)) * t)
+            snare_env = math.exp(-38 * ((t + 0.25) % 0.5))
+            snare = (rng.uniform(-1.0, 1.0) * 0.13 + 0.03 * math.sin(2 * math.pi * 180 * t)) * snare_env
+            bass = 0.42 * math.sin(2 * math.pi * (chord[0] * 0.5) * t)
+            pad = (
+                math.sin(2 * math.pi * chord[0] * t)
+                + 0.65 * math.sin(2 * math.pi * chord[1] * t)
+                + 0.45 * math.sin(2 * math.pi * chord[2] * t)
+            ) / 2.1
+            lead_wave = math.sin(2 * math.pi * lead * t) * (0.6 * lead_gate)
+            wave = 0.38 * pad + 0.26 * lead_wave + 0.24 * kick + 0.2 * bass + snare
+            val = int(5200 * wave)
+            buf.append(max(-32768, min(32767, val)))
+
+        return pygame.mixer.Sound(buffer=buf.tobytes())
+
+    def create_tone_sound(self, freq, duration, amp, end_freq=None):
+        sample_rate = 22050
+        total = int(sample_rate * duration)
+        buf = array("h")
+        rng = random.Random(int(freq * 10 + duration * 1000))
+        for i in range(total):
+            t = i / sample_rate
+            p = i / max(1, total - 1)
+            f = freq if end_freq is None else (freq + (end_freq - freq) * p)
+            env = math.exp(-5.8 * p)
+            tonal = 0.72 * math.sin(2 * math.pi * f * t) + 0.21 * math.sin(2 * math.pi * f * 2.02 * t)
+            noise = 0.12 * rng.uniform(-1.0, 1.0) * math.exp(-10 * p)
+            wave = (tonal + noise) * env
+            buf.append(int(max(-32768, min(32767, amp * wave))))
+        return pygame.mixer.Sound(buffer=buf.tobytes())
+
+    def ensure_bgm(self):
+        if self.music_started or self.bgm_sound is None or not self.bgm_enabled:
+            return
+        try:
+            self.bgm_sound.set_volume(self.bgm_volume)
+            self.bgm_channel = self.bgm_sound.play(loops=-1)
+            self.music_started = True
+        except pygame.error:
+            self.music_started = False
+
+    def stop_bgm(self):
+        if self.bgm_channel is not None:
+            try:
+                self.bgm_channel.stop()
+            except pygame.error:
+                pass
+        self.bgm_channel = None
+        self.music_started = False
+
+    def set_bgm_paused(self, paused):
+        if self.bgm_channel is None:
+            return
+        try:
+            if paused:
+                self.bgm_channel.pause()
+            else:
+                self.bgm_channel.unpause()
+        except pygame.error:
+            pass
+
+    def apply_audio_settings(self):
+        if not self.bgm_enabled:
+            if self.bgm_channel is not None:
+                try:
+                    self.bgm_channel.stop()
+                except pygame.error:
+                    pass
+            self.bgm_channel = None
+            self.music_started = False
+        else:
+            if self.music_started and self.bgm_channel is not None:
+                try:
+                    self.bgm_channel.set_volume(self.bgm_volume)
+                except pygame.error:
+                    pass
+
+    def update_slider_by_x(self, key, x):
+        if key == "bgm":
+            rect = self.bgm_slider_rect
+            self.bgm_volume = max(0.0, min(1.0, (x - rect.left) / max(1, rect.width)))
+        elif key == "sfx":
+            rect = self.sfx_slider_rect
+            self.sfx_volume = max(0.0, min(1.0, (x - rect.left) / max(1, rect.width)))
+        self.apply_audio_settings()
+
+    def play_button_sfx(self):
+        if self.sfx_button is None or not self.sfx_enabled:
+            return
+        try:
+            self.sfx_button.set_volume(self.sfx_volume * 0.75)
+            self.sfx_button.play()
+        except pygame.error:
+            pass
+
+    def play_kill_sfx(self):
+        if self.sfx_kill is None or not self.sfx_enabled:
+            return
+        try:
+            self.sfx_kill.set_volume(self.sfx_volume)
+            self.sfx_kill.play()
+        except pygame.error:
+            pass
+
+    def play_hurt_sfx(self):
+        if self.sfx_hurt is None or not self.sfx_enabled:
+            return
+        try:
+            self.sfx_hurt.set_volume(self.sfx_volume * 0.95)
+            self.sfx_hurt.play()
+        except pygame.error:
+            pass
+
+    def play_boss_sfx(self):
+        if self.sfx_boss is None or not self.sfx_enabled:
+            return
+        try:
+            self.sfx_boss.set_volume(self.sfx_volume)
+            self.sfx_boss.play()
+        except pygame.error:
+            pass
+
+    def tr(self, zh, en):
+        return en if self.ascii_ui else zh
+
+    def render_small(self, text, color):
+        has_non_ascii = any(ord(ch) > 127 for ch in text)
+        font = self.small_font_cjk if has_non_ascii else self.small_font
+        return font.render(text, True, color)
 
     def reset_game(self):
         self.player = Player()
@@ -308,6 +570,7 @@ class Game:
         self.combo_t = 0.0
         self.game_over_timer = 0.0
         self.game_recorded = False
+        self.next_boss_time = random.uniform(44, 56)
 
     def load_history(self):
         if IS_WEB:
@@ -343,6 +606,11 @@ class Game:
         self.history = self.history[:MAX_RECORDS]
         self.save_history()
 
+    def save_current_run_if_needed(self):
+        if self.state in ("playing", "paused") and not self.game_recorded and self.survive_time > 0.5:
+            self.append_history()
+            self.game_recorded = True
+
     def add_explosion(self, x, y, count, color):
         for _ in range(count):
             ang = random.uniform(0, math.tau)
@@ -359,6 +627,36 @@ class Game:
                     size=random.uniform(2, 4),
                 )
             )
+
+    def get_alive_boss(self):
+        for e in self.enemies:
+            if e.alive and e.is_boss:
+                return e
+        return None
+
+    def create_regular_enemy(self, level):
+        roll = random.random()
+        if roll < 0.38:
+            kind = "scout"
+        elif roll < 0.78:
+            kind = "fighter"
+        else:
+            kind = "tank"
+        return Enemy(level, kind=kind, is_boss=False)
+
+    def spawn_enemy_shot(self, enemy):
+        base_speed = 180 + self.survive_time * 1.4
+        if enemy.fire_mode == "fast":
+            self.enemy_bullets.append(Bullet(enemy.x, enemy.y + 14, base_speed + 65, 9, False, vx=random.uniform(-24, 24)))
+        elif enemy.fire_mode == "dual":
+            self.enemy_bullets.append(Bullet(enemy.x - 10, enemy.y + 18, base_speed - 5, 12, False, vx=-20))
+            self.enemy_bullets.append(Bullet(enemy.x + 10, enemy.y + 18, base_speed - 5, 12, False, vx=20))
+        elif enemy.fire_mode == "boss":
+            spread = [-0.52, -0.26, 0.0, 0.26, 0.52]
+            for a in spread:
+                self.enemy_bullets.append(Bullet(enemy.x, enemy.y + 26, base_speed + 35, 13, False, vx=math.sin(a) * 170))
+        else:
+            self.enemy_bullets.append(Bullet(enemy.x, enemy.y + 16, base_speed, 11, False, vx=random.uniform(-12, 12)))
 
     def draw_background(self):
         grad = pygame.Surface((WIDTH, HEIGHT))
@@ -401,25 +699,73 @@ class Game:
         self.screen.blit(shadow, (center_x - title.get_width() // 2 + 3, 120 + wobble + 3))
         self.screen.blit(title, (center_x - title.get_width() // 2, 120 + wobble))
 
-        subtitle = self.ui_font.render("无尽模式 · 刷新最高分", True, (190, 215, 245))
+        subtitle = self.ui_font.render(self.tr("无尽模式 · 刷新最高分", "ENDLESS MODE - BEAT YOUR BEST"), True, (190, 215, 245))
         self.screen.blit(subtitle, (center_x - subtitle.get_width() // 2, 205 + wobble))
 
         mouse_pos = pygame.mouse.get_pos()
         self.menu_flash += 0.06
 
-        self.draw_button(self.start_button, "开始游戏", mouse_pos)
-        self.draw_button(self.quit_button, "退出", mouse_pos, color_base=(95, 78, 88), color_hover=(135, 95, 100))
+        self.draw_button(self.start_button, self.tr("开始游戏", "START"), mouse_pos)
+        self.draw_button(self.quit_button, self.tr("退出", "QUIT"), mouse_pos, color_base=(95, 78, 88), color_hover=(135, 95, 100))
+        self.draw_button(self.settings_button, self.tr("音频设置", "AUDIO SETTINGS"), mouse_pos, color_base=(78, 108, 145), color_hover=(98, 130, 170))
 
-        self.draw_history_panel(470, 72, "历史记录 TOP")
+        self.draw_history_panel(462, 84, self.tr("历史记录 TOP", "TOP SCORES"))
 
-        tip1 = self.small_font.render("移动: WASD / 方向键    攻击: 自动发射", True, (175, 200, 230))
-        tip2 = self.small_font.render("技能EMP: F / 右下角按钮", True, (175, 200, 230))
+        tip1 = self.render_small(self.tr("移动: WASD / 方向键    攻击: 自动发射", "MOVE: WASD/ARROWS   FIRE: AUTO"), (175, 200, 230))
+        tip2 = self.render_small(self.tr("技能EMP: F   暂停: P   菜单: H", "EMP: F   PAUSE: P   MENU: H"), (175, 200, 230))
         self.screen.blit(tip1, (center_x - tip1.get_width() // 2, HEIGHT - 88))
         self.screen.blit(tip2, (center_x - tip2.get_width() // 2, HEIGHT - 58))
+
+    def draw_settings(self):
+        self.draw_background()
+        center_x = WIDTH // 2
+        title = self.title_font.render(self.tr("音频设置", "AUDIO"), True, (240, 248, 255))
+        self.screen.blit(title, (center_x - title.get_width() // 2, 110))
+
+        mouse_pos = pygame.mouse.get_pos()
+        bgm_label = self.tr("背景音乐", "BGM") + ": " + (self.tr("开", "ON") if self.bgm_enabled else self.tr("关", "OFF"))
+        sfx_label = self.tr("音效", "SFX") + ": " + (self.tr("开", "ON") if self.sfx_enabled else self.tr("关", "OFF"))
+        self.draw_button(self.bgm_toggle_button, bgm_label, mouse_pos, color_base=(68, 120, 120), color_hover=(84, 146, 146))
+        self.draw_button(self.sfx_toggle_button, sfx_label, mouse_pos, color_base=(68, 120, 120), color_hover=(84, 146, 146))
+
+        for rect, label, value in (
+            (self.bgm_slider_rect, self.tr("背景音乐音量", "BGM VOLUME"), self.bgm_volume),
+            (self.sfx_slider_rect, self.tr("音效音量", "SFX VOLUME"), self.sfx_volume),
+        ):
+            txt = self.small_font.render(f"{label}: {int(value * 100)}%", True, (220, 236, 255))
+            self.screen.blit(txt, (rect.left, rect.top - 26))
+            pygame.draw.rect(self.screen, (52, 68, 90), rect, border_radius=6)
+            fill_w = int(rect.width * value)
+            pygame.draw.rect(self.screen, (96, 174, 225), (rect.left, rect.top, fill_w, rect.height), border_radius=6)
+            knob_x = rect.left + fill_w
+            pygame.draw.circle(self.screen, (240, 248, 255), (knob_x, rect.centery), 9)
+
+        self.draw_button(self.settings_back_button, self.tr("返回主菜单", "BACK TO MENU"), mouse_pos, color_base=(86, 86, 104), color_hover=(112, 112, 134))
 
     def draw_touch_ui(self):
         if not IS_WEB:
             return
+        # Home button
+        home_surf = pygame.Surface((self.home_button.width, self.home_button.height), pygame.SRCALPHA)
+        pygame.draw.circle(home_surf, (92, 104, 124, 195), (29, 29), 29)
+        pygame.draw.circle(home_surf, (218, 236, 255, 200), (29, 29), 29, width=2)
+        h_text = self.small_font.render("HOME", True, (242, 248, 255))
+        home_surf.blit(h_text, (29 - h_text.get_width() // 2, 29 - h_text.get_height() // 2))
+        self.screen.blit(home_surf, self.home_button.topleft)
+
+        # Pause/Resume button
+        pause_surf = pygame.Surface((self.pause_button.width, self.pause_button.height), pygame.SRCALPHA)
+        pygame.draw.circle(pause_surf, (95, 120, 165, 195), (29, 29), 29)
+        pygame.draw.circle(pause_surf, (218, 236, 255, 200), (29, 29), 29, width=2)
+        pause_label = "PLAY" if self.state == "paused" else "PAUSE"
+        p_text = self.small_font.render(pause_label, True, (242, 248, 255))
+        pause_surf.blit(p_text, (29 - p_text.get_width() // 2, 29 - p_text.get_height() // 2))
+        self.screen.blit(pause_surf, self.pause_button.topleft)
+
+        if self.state != "playing":
+            return
+
+        # EMP button
         surf = pygame.Surface((self.skill_button.width, self.skill_button.height), pygame.SRCALPHA)
         pygame.draw.circle(
             surf,
@@ -440,44 +786,52 @@ class Game:
 
     def draw_history_panel(self, y, h, title):
         panel = pygame.Rect(16, y, WIDTH - 32, h)
+        self.history_panel_rect = panel
         surf = pygame.Surface((panel.width, panel.height), pygame.SRCALPHA)
         pygame.draw.rect(surf, (15, 25, 40, 175), surf.get_rect(), border_radius=10)
         pygame.draw.rect(surf, (190, 220, 250, 120), surf.get_rect(), width=1, border_radius=10)
         self.screen.blit(surf, panel.topleft)
 
-        title_surf = self.small_font.render(title, True, (208, 230, 250))
+        title_surf = self.render_small(title, (208, 230, 250))
         self.screen.blit(title_surf, (panel.left + 10, panel.top + 6))
 
         if not self.history:
-            empty = self.small_font.render("暂无记录", True, (165, 190, 210))
+            empty = self.render_small(self.tr("暂无记录", "No records"), (165, 190, 210))
             self.screen.blit(empty, (panel.left + 10, panel.top + 32))
             return
 
-        rows = min(3, len(self.history))
+        total_pages = max(1, math.ceil(len(self.history) / self.history_page_size))
+        self.history_page = max(0, min(self.history_page, total_pages - 1))
+        start = self.history_page * self.history_page_size
+        end = min(len(self.history), start + self.history_page_size)
+
+        rows = end - start
+        old_clip = self.screen.get_clip()
+        self.screen.set_clip(pygame.Rect(panel.left + 8, panel.top + 26, panel.width - 16, panel.height - 30))
         for i in range(rows):
-            rec = self.history[i]
-            text = f"{i + 1}. 分{rec['score']}  击落{rec['kills']}  生存{rec['time']}s"
-            line = self.small_font.render(text, True, (220, 235, 255))
+            rec = self.history[start + i]
+            rank = start + i + 1
+            if IS_WEB:
+                text = f"{rank}. score {rec['score']}  kill {rec['kills']}  {rec['time']}s"
+            else:
+                text = f"{rank}. 分{rec['score']}  击落{rec['kills']}  生存{rec['time']}s"
+            line = self.render_small(text, (220, 235, 255))
             self.screen.blit(line, (panel.left + 10, panel.top + 28 + i * 20))
+        self.screen.set_clip(old_clip)
+
+        page_txt = self.small_font.render(f"{self.history_page + 1}/{total_pages}", True, (205, 228, 250))
+        self.screen.blit(page_txt, (panel.right - page_txt.get_width() - 12, panel.top + 6))
 
     def draw_button(self, rect, text, mouse_pos, color_base=(70, 128, 175), color_hover=(94, 166, 216)):
         hovered = rect.collidepoint(mouse_pos)
-        t = 0.5 + 0.5 * math.sin(self.menu_flash)
         c1 = color_hover if hovered else color_base
-        c2 = tuple(max(0, min(255, int(v * (0.85 + 0.15 * t)))) for v in c1)
+        shadow = pygame.Surface((rect.width + 4, rect.height + 4), pygame.SRCALPHA)
+        pygame.draw.rect(shadow, (10, 18, 32, 90), (0, 0, rect.width + 4, rect.height + 4), border_radius=18)
+        self.screen.blit(shadow, (rect.left - 2, rect.top + 3))
 
         surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-        for y in range(rect.height):
-            ratio = y / max(1, rect.height - 1)
-            col = (
-                int(c1[0] * (1 - ratio) + c2[0] * ratio),
-                int(c1[1] * (1 - ratio) + c2[1] * ratio),
-                int(c1[2] * (1 - ratio) + c2[2] * ratio),
-                240,
-            )
-            pygame.draw.line(surf, col, (0, y), (rect.width, y))
-
-        pygame.draw.rect(surf, (230, 245, 255, 180), (0, 0, rect.width, rect.height), width=2, border_radius=12)
+        pygame.draw.rect(surf, (*c1, 245), (0, 0, rect.width, rect.height), border_radius=16)
+        pygame.draw.rect(surf, (230, 245, 255, 190), (0, 0, rect.width, rect.height), width=2, border_radius=16)
         self.screen.blit(surf, rect.topleft)
 
         label = self.h1_font.render(text, True, (245, 250, 255))
@@ -501,14 +855,14 @@ class Game:
         sk_text = self.small_font.render("EMP", True, (190, 220, 250))
         self.screen.blit(sk_text, (254, 59))
 
-        lane_text = self.small_font.render(f"弹道 {self.player.bullet_lanes}", True, (190, 220, 250))
+        lane_text = self.small_font.render(self.tr(f"弹道 {self.player.bullet_lanes}", f"LANE {self.player.bullet_lanes}"), True, (190, 220, 250))
         self.screen.blit(lane_text, (305, 59))
 
         right = WIDTH - 26
-        score_text = self.ui_font.render(f"分数: {self.score}", True, (245, 235, 200))
-        atk_text = self.ui_font.render(f"攻击: {self.player.attack}", True, (245, 235, 200))
-        lv_text = self.ui_font.render(f"等级: {self.player.level}", True, (245, 235, 200))
-        tm_text = self.ui_font.render(f"生存: {int(self.survive_time)}s", True, (245, 235, 200))
+        score_text = self.ui_font.render(self.tr(f"分数: {self.score}", f"SCORE: {self.score}"), True, (245, 235, 200))
+        atk_text = self.ui_font.render(self.tr(f"攻击: {self.player.attack}", f"ATK: {self.player.attack}"), True, (245, 235, 200))
+        lv_text = self.ui_font.render(self.tr(f"等级: {self.player.level}", f"LV: {self.player.level}"), True, (245, 235, 200))
+        tm_text = self.ui_font.render(self.tr(f"生存: {int(self.survive_time)}s", f"TIME: {int(self.survive_time)}s"), True, (245, 235, 200))
 
         self.screen.blit(score_text, (right - score_text.get_width(), 24))
         self.screen.blit(atk_text, (right - atk_text.get_width(), 46))
@@ -519,45 +873,160 @@ class Game:
             combo_text = self.h1_font.render(f"COMBO x{self.combo}", True, (255, 195, 120))
             self.screen.blit(combo_text, (WIDTH // 2 - combo_text.get_width() // 2, 105))
 
+        boss = self.get_alive_boss()
+        if boss is not None:
+            pygame.draw.rect(self.screen, (55, 45, 56), (28, 112, WIDTH - 56, 10), border_radius=5)
+            ratio = max(0.0, boss.hp / boss.max_hp)
+            pygame.draw.rect(self.screen, (235, 92, 122), (28, 112, int((WIDTH - 56) * ratio), 10), border_radius=5)
+            boss_text = self.small_font.render("BOSS", True, (255, 220, 220))
+            self.screen.blit(boss_text, (WIDTH // 2 - boss_text.get_width() // 2, 108))
+
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                self.save_current_run_if_needed()
+                self.stop_bgm()
                 self.running = False
             elif event.type == pygame.KEYDOWN:
                 if self.state == "menu":
                     if event.key == pygame.K_RETURN:
+                        self.play_button_sfx()
                         self.state = "playing"
                         self.reset_game()
+                        self.ensure_bgm()
+                    elif event.key == pygame.K_s:
+                        self.play_button_sfx()
+                        self.state = "settings"
                 elif self.state == "playing":
                     if event.key == pygame.K_f:
                         self.cast_emp()
+                    elif event.key == pygame.K_p:
+                        self.play_button_sfx()
+                        self.state = "paused"
+                        self.set_bgm_paused(True)
+                    elif event.key == pygame.K_h:
+                        self.play_button_sfx()
+                        self.save_current_run_if_needed()
+                        self.state = "menu"
+                        self.stop_bgm()
+                        self.touch_active = False
+                elif self.state == "paused":
+                    if event.key == pygame.K_p:
+                        self.play_button_sfx()
+                        self.state = "playing"
+                        self.set_bgm_paused(False)
+                    elif event.key == pygame.K_h:
+                        self.play_button_sfx()
+                        self.save_current_run_if_needed()
+                        self.state = "menu"
+                        self.stop_bgm()
+                        self.touch_active = False
+                        self.set_bgm_paused(False)
+                elif self.state == "settings":
+                    if event.key in (pygame.K_ESCAPE, pygame.K_h):
+                        self.play_button_sfx()
+                        self.state = "menu"
+                        self.stop_bgm()
                 elif self.state == "game_over":
                     if event.key == pygame.K_r:
+                        self.play_button_sfx()
                         self.state = "playing"
                         self.reset_game()
+                        self.ensure_bgm()
                     elif event.key == pygame.K_ESCAPE:
+                        self.play_button_sfx()
+                        self.save_current_run_if_needed()
                         self.state = "menu"
+                        self.stop_bgm()
+                    elif event.key == pygame.K_h:
+                        self.play_button_sfx()
+                        self.save_current_run_if_needed()
+                        self.state = "menu"
+                        self.stop_bgm()
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if self.state == "menu":
                     if self.start_button.collidepoint(event.pos):
+                        self.play_button_sfx()
                         self.state = "playing"
                         self.reset_game()
+                        self.ensure_bgm()
                     elif self.quit_button.collidepoint(event.pos):
+                        self.play_button_sfx()
                         self.running = False
-                elif self.state == "playing":
-                    if self.skill_button.collidepoint(event.pos):
+                    elif self.settings_button.collidepoint(event.pos):
+                        self.play_button_sfx()
+                        self.state = "settings"
+                    elif self.history_panel_rect.collidepoint(event.pos):
+                        self.history_dragging = True
+                        self.history_drag_start_y = event.pos[1]
+                elif self.state == "settings":
+                    if self.bgm_toggle_button.collidepoint(event.pos):
+                        self.play_button_sfx()
+                        self.bgm_enabled = not self.bgm_enabled
+                        self.apply_audio_settings()
+                    elif self.sfx_toggle_button.collidepoint(event.pos):
+                        self.play_button_sfx()
+                        self.sfx_enabled = not self.sfx_enabled
+                    elif self.bgm_slider_rect.collidepoint(event.pos):
+                        self.dragging_slider = "bgm"
+                        self.update_slider_by_x("bgm", event.pos[0])
+                    elif self.sfx_slider_rect.collidepoint(event.pos):
+                        self.dragging_slider = "sfx"
+                        self.update_slider_by_x("sfx", event.pos[0])
+                    elif self.settings_back_button.collidepoint(event.pos):
+                        self.play_button_sfx()
+                        self.state = "menu"
+                        self.stop_bgm()
+                elif self.state in ("playing", "paused"):
+                    if self.home_button.collidepoint(event.pos):
+                        self.play_button_sfx()
+                        self.save_current_run_if_needed()
+                        self.state = "menu"
+                        self.stop_bgm()
+                        self.touch_active = False
+                        self.set_bgm_paused(False)
+                    elif self.pause_button.collidepoint(event.pos):
+                        self.play_button_sfx()
+                        self.state = "playing" if self.state == "paused" else "paused"
+                        self.set_bgm_paused(self.state == "paused")
+                    elif self.state == "playing" and self.skill_button.collidepoint(event.pos):
+                        self.play_button_sfx()
                         self.cast_emp()
-                    else:
+                    elif self.state == "playing":
                         self.touch_active = True
                         self.touch_pos = event.pos
                 elif self.state == "game_over":
+                    self.play_button_sfx()
                     self.state = "menu"
-            elif event.type == pygame.MOUSEMOTION and self.state == "playing":
-                if self.touch_active:
+                    self.stop_bgm()
+            elif event.type == pygame.MOUSEMOTION:
+                if self.state == "playing" and self.touch_active:
                     self.touch_pos = event.pos
+                elif self.state == "settings" and self.dragging_slider is not None:
+                    self.update_slider_by_x(self.dragging_slider, event.pos[0])
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 if self.state == "playing":
                     self.touch_active = False
+                elif self.state == "settings":
+                    self.dragging_slider = None
+                elif self.state == "menu" and self.history_dragging:
+                    if self.history_drag_start_y is not None:
+                        dy = event.pos[1] - self.history_drag_start_y
+                        max_page = max(0, math.ceil(len(self.history) / self.history_page_size) - 1)
+                        if dy <= -24:
+                            self.history_page = min(max_page, self.history_page + 1)
+                            self.play_button_sfx()
+                        elif dy >= 24:
+                            self.history_page = max(0, self.history_page - 1)
+                            self.play_button_sfx()
+                    self.history_dragging = False
+                    self.history_drag_start_y = None
+            elif event.type == pygame.MOUSEWHEEL and self.state == "menu":
+                max_page = max(0, math.ceil(len(self.history) / self.history_page_size) - 1)
+                if event.y < 0:
+                    self.history_page = min(max_page, self.history_page + 1)
+                elif event.y > 0:
+                    self.history_page = max(0, self.history_page - 1)
 
     def cast_emp(self):
         if self.player.skill_t > 0:
@@ -571,9 +1040,10 @@ class Game:
             if e.hp <= 0 and e.alive:
                 e.alive = False
                 destroyed += 1
-                self.score += 55
+                self.score += 280 if e.is_boss else 55
                 self.kills += 1
-                self.add_explosion(e.x, e.y, 22, (255, 170, 110))
+                self.play_kill_sfx()
+                self.add_explosion(e.x, e.y, 56 if e.is_boss else 22, (255, 170, 110))
                 self.spawn_pickup(e.x, e.y)
 
         self.enemy_bullets.clear()
@@ -598,8 +1068,6 @@ class Game:
         for i in range(lanes):
             x = center_x + (start + i) * lane_gap
             self.player_bullets.append(Bullet(x, base_y, -620, self.player.attack * dmg_scale, True))
-        if self.player.level >= 4:
-            self.player_bullets.append(Bullet(center_x, self.player.y - 26, -700, self.player.attack * 0.8, True))
 
     def update_playing(self, dt):
         self.survive_time += dt
@@ -625,10 +1093,19 @@ class Game:
         self.spawn_t -= dt
         if self.spawn_t <= 0:
             level = 1 + int(self.survive_time / 16)
-            self.enemies.append(Enemy(level))
+            self.enemies.append(self.create_regular_enemy(level))
             if self.survive_time > 35 and random.random() < 0.35:
-                self.enemies.append(Enemy(level + 1))
+                self.enemies.append(self.create_regular_enemy(level + 1))
             self.spawn_t = self.spawn_cd
+
+        if self.survive_time >= self.next_boss_time and self.get_alive_boss() is None:
+            level = 1 + int(self.survive_time / 18)
+            boss = Enemy(level, kind="boss", is_boss=True)
+            boss.x = WIDTH // 2
+            boss.y = -90
+            self.enemies.append(boss)
+            self.play_boss_sfx()
+            self.next_boss_time += random.uniform(52, 70)
 
         if self.player.fire_t <= 0:
             self.fire_player_bullets()
@@ -645,23 +1122,25 @@ class Game:
             e.update(dt)
             if e.shoot_t <= 0 and e.alive:
                 e.shoot_t = e.shoot_cd
-                self.enemy_bullets.append(Bullet(e.x, e.y + 16, 205 + self.survive_time * 1.5, 11, False))
+                self.spawn_enemy_shot(e)
 
         for b in self.player_bullets:
             if not b.alive:
                 continue
             for e in self.enemies:
                 if e.alive and b.rect.colliderect(e.rect):
-                    e.hp -= b.dmg
+                    hit_dmg = b.dmg * (0.55 if e.is_boss else 1.0)
+                    e.hp -= hit_dmg
                     b.alive = False
                     if e.hp <= 0:
                         e.alive = False
                         self.kills += 1
+                        self.play_kill_sfx()
                         self.combo = self.combo + 1 if self.combo_t > 0 else 1
                         self.combo_t = 1.35
-                        gain = 35 + min(40, self.combo * 2)
+                        gain = (260 if e.is_boss else 35) + min(40, self.combo * 2)
                         self.score += gain
-                        self.add_explosion(e.x, e.y, 20, (255, 170, 110))
+                        self.add_explosion(e.x, e.y, 60 if e.is_boss else 20, (255, 170, 110))
                         self.spawn_pickup(e.x, e.y)
                     else:
                         self.add_explosion(b.x, b.y, 4, (130, 220, 255))
@@ -674,6 +1153,7 @@ class Game:
                 if self.player.invuln <= 0:
                     self.player.hp -= b.dmg
                     self.player.invuln = 2.0
+                    self.play_hurt_sfx()
                     self.add_explosion(self.player.x, self.player.y, 10, (105, 220, 255))
 
         for e in self.enemies:
@@ -682,6 +1162,7 @@ class Game:
                 if self.player.invuln <= 0:
                     self.player.hp -= 20
                     self.player.invuln = 2.0
+                    self.play_hurt_sfx()
                     self.add_explosion(self.player.x, self.player.y, 14, (255, 120, 120))
                 self.add_explosion(e.x, e.y, 16, (255, 155, 110))
 
@@ -750,17 +1231,29 @@ class Game:
         self.screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 170))
 
         lines = [
-            f"最终分数: {self.score}",
-            f"击落敌机: {self.kills}",
-            f"生存时间: {int(self.survive_time)} 秒",
-            "按 R 立即重开，按 ESC 返回主菜单",
+            self.tr(f"最终分数: {self.score}", f"FINAL SCORE: {self.score}"),
+            self.tr(f"击落敌机: {self.kills}", f"KILLS: {self.kills}"),
+            self.tr(f"生存时间: {int(self.survive_time)} 秒", f"SURVIVAL: {int(self.survive_time)}s"),
+            self.tr("按 R 重开  |  ESC / H 回菜单", "R to retry  |  ESC / H to menu"),
         ]
         for i, txt in enumerate(lines):
             color = (235, 225, 210) if i < 3 else (190, 210, 235)
             surf = self.h1_font.render(txt, True, color)
-            self.screen.blit(surf, (WIDTH // 2 - surf.get_width() // 2, 280 + i * 44))
+            self.screen.blit(surf, (WIDTH // 2 - surf.get_width() // 2, 260 + i * 40))
 
-        self.draw_history_panel(468, 104, "历史记录 TOP")
+        self.draw_history_panel(452, 120, self.tr("历史记录 TOP", "TOP SCORES"))
+
+    def draw_pause_overlay(self):
+        self.draw_playing()
+        mask = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        mask.fill((8, 10, 18, 165))
+        self.screen.blit(mask, (0, 0))
+
+        title = self.title_font.render("PAUSED", True, (230, 240, 255))
+        self.screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 220))
+        tip = self.h1_font.render(self.tr("按 P 继续，按 H 返回菜单", "Press P to resume, H for menu"), True, (210, 224, 245))
+        self.screen.blit(tip, (WIDTH // 2 - tip.get_width() // 2, 300))
+        self.draw_touch_ui()
 
     def run(self):
         while self.running:
@@ -771,9 +1264,13 @@ class Game:
 
             if self.state == "menu":
                 self.draw_menu()
+            elif self.state == "settings":
+                self.draw_settings()
             elif self.state == "playing":
                 self.update_playing(dt)
                 self.draw_playing()
+            elif self.state == "paused":
+                self.draw_pause_overlay()
             else:
                 self.draw_game_over()
 
@@ -791,9 +1288,13 @@ class Game:
 
             if self.state == "menu":
                 self.draw_menu()
+            elif self.state == "settings":
+                self.draw_settings()
             elif self.state == "playing":
                 self.update_playing(dt)
                 self.draw_playing()
+            elif self.state == "paused":
+                self.draw_pause_overlay()
             else:
                 self.draw_game_over()
 
