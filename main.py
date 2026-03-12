@@ -44,6 +44,7 @@ WIDTH, HEIGHT = 410, 720
 FPS = 50 if IS_WEB else 60
 RECORD_FILE = "records.json"
 MAX_RECORDS = 10
+FORCE_CHINESE_UI = True
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 CJK_FONT_FILES = (
     os.path.join("assets", "fonts", "NotoSansSC-Regular.ttf"),
@@ -473,9 +474,13 @@ class Game:
             self.setup_audio()
 
         self.cjk_font_path = self.find_cjk_font_asset()
-        self.ascii_ui = IS_WEB and self.cjk_font_path is None
+        # 强制中文 UI 时，不再因为网页端缺字库而回退到英文文案。
+        self.ascii_ui = (not FORCE_CHINESE_UI) and IS_WEB and self.cjk_font_path is None
         if IS_WEB and self.cjk_font_path is None:
-            print("[web-font] No bundled CJK font asset found; falling back to ASCII UI.")
+            if self.ascii_ui:
+                print("[web-font] No bundled CJK font asset found; falling back to ASCII UI.")
+            else:
+                print("[web-font] No bundled CJK font asset found; keeping Chinese UI text.")
         elif IS_WEB:
             print(f"[web-font] Using bundled CJK font: {os.path.basename(self.cjk_font_path)}")
         self.title_font = self.load_ui_font(48, bold=True, prefer_cjk=True)
@@ -536,8 +541,13 @@ class Game:
             candidates = ["consolas", "couriernew", "dejavusansmono", "liberationmono"]
         elif prefer_cjk:
             candidates = [
+                "microsoftjhengheiui",
+                "microsoftjhenghei",
                 "microsoftyaheiui",
                 "microsoftyahei",
+                "pingfangsc",
+                "heiti sc",
+                "wenquanyizenhei",
                 "notosanscjksc",
                 "sourcehansanssc",
                 "simhei",
