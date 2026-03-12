@@ -53,11 +53,15 @@ Windows 本地若遇到 `UnicodeDecodeError: 'gbk' codec can't decode ...`，请
 
 3. 本地预览
 
-```bash
-pygbag main.py
+打包后，在项目目录执行：
+
+```powershell
+./preview_web.ps1
 ```
 
-执行后会生成 `build/web` 目录，可将里面内容部署到 GitHub Pages、Vercel、Netlify。
+然后打开浏览器访问 `http://localhost:8000` 即可预览网页版游戏。
+
+此命令会在 `build/web` 目录启动 HTTP 服务器，可用于本地测试。生成的内容也可部署到 GitHub Pages、Vercel、Netlify。
 
 说明：浏览器环境通常拿不到 Windows 自带的中文字体。本项目现在已内置 `assets/fonts/NotoSansCJKsc-Regular.otf` 作为网页端中文字体；如果这个文件缺失，网页版会自动切换到英文界面，避免中文显示成方块。
 
