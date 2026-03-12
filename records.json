@@ -1,5 +1,10 @@
 [
   {
+    "score": 244133,
+    "kills": 3369,
+    "time": 606
+  },
+  {
     "score": 62921,
     "kills": 901,
     "time": 178
@@ -13,6 +18,16 @@
     "score": 16123,
     "kills": 224,
     "time": 65
+  },
+  {
+    "score": 13603,
+    "kills": 206,
+    "time": 65
+  },
+  {
+    "score": 12436,
+    "kills": 197,
+    "time": 62
   },
   {
     "score": 11024,
@@ -33,20 +48,5 @@
     "score": 4911,
     "kills": 89,
     "time": 45
-  },
-  {
-    "score": 3026,
-    "kills": 60,
-    "time": 41
-  },
-  {
-    "score": 2494,
-    "kills": 46,
-    "time": 29
-  },
-  {
-    "score": 2096,
-    "kills": 36,
-    "time": 27
   }
 ]

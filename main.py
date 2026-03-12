@@ -1,3 +1,26 @@
+"""太空舰队大战三体人 - 基于 Pygame 的无尽射击游戏
+
+游戏特性：
+  - 无尽模式：敌机不断刷新，难度持续增加
+  - 玩家成长：击杀敌机获得分数，累积分数升级以提升攻击力
+  - 特殊技能：EMP 技能可清除全屏敌弹并伤害敌机
+  - 掉落系统：击杀敌机可能掉落加弹道、恢复生命值的 buff
+  - 历史记录：保存历史成绩排行（Top 10）
+  - 网页版支持：可通过 pygbag 打包为网页版，手机浏览器可玩
+
+第三方库说明：
+    - pygame: 游戏引擎库，负责窗口、输入事件、图形绘制、声音播放与碰撞矩形
+    - pygbag: 网页构建工具（不在运行时导入），用于把 pygame 项目打包到浏览器环境
+
+主要类:
+  - Particle: 爆炸粒子效果
+  - Bullet: 子弹（玩家和敌机都有）
+  - Enemy: 敌机（包括普通敌机和 Boss）
+  - Pickup: 掉落物（buff）
+  - Player: 玩家飞机
+  - Game: 主游戏逻辑控制
+"""
+
 import math
 import json
 import os
@@ -8,19 +31,42 @@ from dataclasses import dataclass
 
 import pygame
 
+# 第三方库导入说明：
+# pygame 是本项目运行时唯一必须的第三方库。
+# 其余导入均为 Python 标准库。
+
 IS_WEB = sys.platform in ("emscripten", "wasi") or hasattr(sys, "_emscripten_info")
 if IS_WEB:
     import asyncio
 
 
-WIDTH, HEIGHT = 410, 640
+WIDTH, HEIGHT = 410, 720
 FPS = 50 if IS_WEB else 60
 RECORD_FILE = "records.json"
 MAX_RECORDS = 10
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+CJK_FONT_FILES = (
+    os.path.join("assets", "fonts", "NotoSansSC-Regular.ttf"),
+    os.path.join("assets", "fonts", "NotoSansSC-Medium.ttf"),
+    os.path.join("assets", "fonts", "SourceHanSansSC-Regular.otf"),
+    "NotoSansSC-Regular.ttf",
+    "NotoSansSC-Medium.ttf",
+    "SourceHanSansSC-Regular.otf",
+)
 
 
 @dataclass
 class Particle:
+    """爆炸粒子：用于显示爆炸效果的粒子
+    
+    属性：
+        x, y: 粒子当前位置
+        vx, vy: 粒子速度（像素/秒）
+        life: 粒子剩余生命（秒）
+        max_life: 粒子初始生命（用于透明度计算）
+        color: 粒子颜色 (R, G, B)
+        size: 粒子初始大小（像素）
+    """
     x: float
     y: float
     vx: float
@@ -31,10 +77,15 @@ class Particle:
     size: float
 
     def update(self, dt):
-        self.x += self.vx * dt
-        self.y += self.vy * dt
-        self.vy += 140 * dt
-        self.life -= dt
+        """更新粒子状态：位置、速度、生命
+        
+        Args:
+            dt: 帧时间间隔（秒）
+        """
+        self.x += self.vx * dt  # 水平移动
+        self.y += self.vy * dt  # 竖直移动
+        self.vy += 140 * dt     # 重力加速度（下落效果）
+        self.life -= dt         # 生命递减
 
     def draw(self, screen):
         t = max(0.0, self.life / self.max_life)
@@ -46,7 +97,26 @@ class Particle:
 
 
 class Bullet:
+    """子弹类：包括玩家子弹和敌机子弹
+    
+    属性：
+        x, y: 子弹位置
+        vx, vy: 子弹速度（像素/秒）
+        dmg: 子弹伤害值
+        friendly: True 表示玩家子弹，False 表示敌机子弹
+        alive: 子弹是否存活（超出屏幕会被标记为死亡）
+        radius: 子弹碰撞半径（用于判定伤害和碰撞）
+    """
     def __init__(self, x, y, vy, dmg, friendly=True, vx=0.0):
+        """初始化子弹
+        
+        Args:
+            x, y: 起始位置
+            vy: 竖直速度（负数表示向上，正数表示向下）
+            dmg: 伤害值
+            friendly: 是否是玩家子弹（默认 True）
+            vx: 水平速度（默认 0，用于敌机斜射）
+        """
         self.x = x
         self.y = y
         self.vx = vx
@@ -85,6 +155,23 @@ class Bullet:
 
 
 class Enemy:
+    """敌机类：包括三种小敌机和 Boss
+    
+    敌机类型（kind）:
+        "scout": 侦察机 - 快速、血量少、火力快
+        "fighter": 战斗机 - 平衡型（大多数小敌机）
+        "tank": 坦克 - 慢速、血量多、火力强
+        "boss": Boss 
+    
+    属性：
+        x, y: 敌机位置
+        w, h: 敌机尺寸（用于渲染和碰撞）
+        speed: 敌机移动速度
+        max_hp, hp: 敌机生命值
+        shoot_cd, shoot_t: 开火冷却（秒）
+        is_boss: 是否是 Boss
+        fire_mode: 开火模式（"single"、"fast"、"dual"、"boss"）
+    """
     def __init__(self, level=1, kind="fighter", is_boss=False):
         self.kind = kind
         self.is_boss = is_boss
@@ -172,7 +259,20 @@ class Enemy:
 
 
 class Pickup:
-    _label_font = None
+    """掉落物（Buff）：敌机击杀时可能掉落
+    
+    掉落类型（kind）:
+        "multishot": 加弹道 - 增加一条射击弹道（最多 5 条）
+        "heal": 恢复生命 - 恢复玩家 22 点生命值
+    
+    属性：
+        x, y: 掉落物位置
+        kind: 掉落物类型
+        speed: 下落速度（像素/秒）
+        alive: 是否存活（超出屏幕或被拾取会标记为死亡）
+        radius: 掉落物碰撞半径
+    """
+    _label_font = None  # 类变量：缓存字体对象，用于显示 "+B" 或 "+H" 标签
 
     def __init__(self, x, y, kind):
         self.x = x
@@ -209,7 +309,22 @@ class Pickup:
 
 
 class Player:
+    """玩家飞机类
+    
+    属性：
+        x, y: 玩家位置
+        w, h: 玩家尺寸（用于渲染和碰撞）
+        speed: 移动速度（像素/秒）
+        max_hp, hp: 生命值
+        attack: 攻击力（影响子弹伤害）
+        level: 等级（提升攻击力和连击分数倍数）
+        fire_cd, fire_t: 开火冷却（秒）
+        bullet_lanes: 弹道数（1-5）
+        invuln: 无敌剩余时间（被击中时设为 2.0 秒）
+        skill_t, skill_cd: EMP 技能冷却（秒）
+    """
     def __init__(self):
+        """初始化玩家飞机"""
         self.x = WIDTH // 2
         self.y = HEIGHT - 90
         self.w = 40
@@ -316,9 +431,26 @@ class Player:
 
 
 class Game:
+    """主游戏类：控制游戏的整体流程和状态
+    
+    游戏状态（state）:
+        "menu": 菜单界面
+        "playing": 游戏进行中
+        "paused": 暂停
+        "settings": 音频设置界面
+        "game_over": 游戏结束
+    
+    主要负责：
+        - 事件处理（键盘、鼠标、触摸）
+        - 游戏逻辑更新（敌机生成、碰撞、伤害等）
+        - 界面渲染（菜单、游戏界面、结算界面）
+        - 音频管理（BGM、音效）
+        - 历史记录保存
+    """
     def __init__(self):
+        # pygame 初始化流程：启动视频/输入子系统并创建主窗口。
         pygame.init()
-        pygame.display.set_caption("飞机大战 - 无尽模式")
+        pygame.display.set_caption("太空舰队大战三体人 - 无尽模式")
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
         self.audio_ready = False
@@ -338,11 +470,14 @@ class Game:
         if not IS_WEB:
             self.setup_audio()
 
-        self.title_font = pygame.font.SysFont("microsoftyaheiui", 48, bold=True)
-        self.h1_font = pygame.font.SysFont("microsoftyaheiui", 24, bold=True)
-        self.ui_font = pygame.font.SysFont("microsoftyaheiui", 22)
-        self.small_font = pygame.font.SysFont("consolas", 18)
-        self.small_font_cjk = pygame.font.SysFont("microsoftyaheiui", 20)
+        self.cjk_font_path = self.find_cjk_font_asset()
+        self.ascii_ui = IS_WEB and self.cjk_font_path is None
+        self.title_font = self.load_ui_font(48, bold=True, prefer_cjk=True)
+        self.menu_title_font = self.load_ui_font(34, bold=True, prefer_cjk=True)
+        self.h1_font = self.load_ui_font(24, bold=True, prefer_cjk=True)
+        self.ui_font = self.load_ui_font(22, prefer_cjk=True)
+        self.small_font = self.load_ui_font(18, mono=True)
+        self.small_font_cjk = self.load_ui_font(20, prefer_cjk=True)
 
         self.bg_base = self.build_bg_base()
         star_count = 36 if IS_WEB else 90
@@ -375,9 +510,47 @@ class Game:
         self.history_dragging = False
 
         self.history = self.load_history()
-        self.ascii_ui = False
 
         self.reset_game()
+
+    def find_cjk_font_asset(self):
+        for relative_path in CJK_FONT_FILES:
+            font_path = os.path.join(PROJECT_DIR, relative_path)
+            if os.path.exists(font_path):
+                return font_path
+        return None
+
+    def load_ui_font(self, size, bold=False, prefer_cjk=False, mono=False):
+        if prefer_cjk and self.cjk_font_path is not None:
+            font = pygame.font.Font(self.cjk_font_path, size)
+            font.set_bold(bold)
+            return font
+
+        if mono:
+            candidates = ["consolas", "couriernew", "dejavusansmono", "liberationmono"]
+        elif prefer_cjk:
+            candidates = [
+                "microsoftyaheiui",
+                "microsoftyahei",
+                "notosanscjksc",
+                "sourcehansanssc",
+                "simhei",
+                "arialunicode",
+                "arial",
+            ]
+        else:
+            candidates = ["consolas", "arial", "dejavusans"]
+
+        for name in candidates:
+            matched = pygame.font.match_font(name, bold=bold)
+            if matched:
+                font = pygame.font.Font(matched, size)
+                font.set_bold(bold)
+                return font
+
+        font = pygame.font.Font(None, size)
+        font.set_bold(bold)
+        return font
 
     def set_touch_from_finger(self, fx, fy):
         # Pygame finger coordinates are normalized to [0, 1].
@@ -404,8 +577,13 @@ class Game:
         return False
 
     def setup_audio(self):
+        """初始化音频系统并创建 BGM 和音效
+        
+        - 网页端采用较低的采样率（11025 Hz）以减少加载时间
+        - 桌面端使用较高采样率（22050 Hz）以获得更好音质
+        """
         if self.audio_ready:
-            return
+            return  # 已初始化过，直接返回
         try:
             if not pygame.mixer.get_init():
                 # Use a lighter mixer config on web to improve startup speed.
@@ -428,6 +606,21 @@ class Game:
             self.audio_ready = False
 
     def create_bgm_sound(self):
+        """合成背景音乐
+        
+        使用和弦+旋律+节奏的方式生成 5-8 秒的背景音乐
+        - 网页端时长为 5 秒（到达最后会循环播放）
+        - 桌面端时长为 8 秒
+        
+        组成部分：
+          - pad: 和弦垫底音（4 条音轨）
+          - lead: 主旋律（8 个音符循环）
+          - kick: 鼓声（低频节奏）
+          - snare: 镲声（高频点缀）
+          - bass: 贝司（和弦下根）
+        """
+        # 算法说明：采用“分轨加法合成”（pad/lead/kick/snare/bass）逐采样生成 PCM。
+        # 每个采样点都按时间 t 计算波形并叠加，再裁剪到 int16 范围交给 pygame.mixer.Sound。
         sample_rate = 11025 if IS_WEB else 22050
         duration = 5.0 if IS_WEB else 8.0
         total = int(sample_rate * duration)
@@ -591,6 +784,8 @@ class Game:
         return font.render(text, True, color)
 
     def reset_game(self):
+        """重置游戏状态
+        """
         self.player = Player()
         self.enemies = []
         self.pickups = []
@@ -632,12 +827,22 @@ class Game:
             pass
 
     def append_history(self):
+        """将当前游戏成绩添加到历史记录（且保存到文件）
+        
+        记录包含：
+          - score: 最终分数
+          - kills: 击杀数
+          - time: 游戏执行时间
+        
+        记录会自动按分数排序，且仅保留前 10 条
+        """
         entry = {
             "score": int(self.score),
             "kills": int(self.kills),
             "time": int(self.survive_time),
         }
         self.history.append(entry)
+        # 排行算法：按分数降序排序，只保留 Top N（N=MAX_RECORDS）。
         self.history.sort(key=lambda item: item.get("score", 0), reverse=True)
         self.history = self.history[:MAX_RECORDS]
         self.save_history()
@@ -729,13 +934,21 @@ class Game:
                 s[1] = -2
 
     def draw_menu(self):
+        """绘制菜单界面序列
+        
+        1. 背景
+        2. 标题
+        3. 按钮
+        4. 历史成绩
+        5. 操作提示
+        """
         self.draw_background()
 
         center_x = WIDTH // 2
         wobble = int(math.sin(self.time * 2.3) * 6)
-        title_text = self.tr("飞机大战", "SKY STRIKE")
-        title = self.title_font.render(title_text, True, (240, 248, 255))
-        shadow = self.title_font.render(title_text, True, (70, 110, 160))
+        title_text = self.tr("太空舰队大战三体人", "SPACE FLEET VS TRISOLARANS")
+        title = self.menu_title_font.render(title_text, True, (240, 248, 255))
+        shadow = self.menu_title_font.render(title_text, True, (70, 110, 160))
         self.screen.blit(shadow, (center_x - title.get_width() // 2 + 3, 120 + wobble + 3))
         self.screen.blit(title, (center_x - title.get_width() // 2, 120 + wobble))
 
@@ -757,6 +970,15 @@ class Game:
         self.screen.blit(tip2, (center_x - tip2.get_width() // 2, HEIGHT - 58))
 
     def draw_settings(self):
+        """绘制音频设置界面
+        
+        显示下列元素：
+          1. 上方是 BGM 开关按钮（强化设置会钉住音效推清）
+          2. 下库是 BGM 音量滑块
+          3. 再下是 SFX 开关按钮
+          4. SFX 音量滑块
+          5. 最下显示返回按钮
+        """
         self.draw_background()
         center_x = WIDTH // 2
         title = self.title_font.render(self.tr("音频设置", "AUDIO"), True, (240, 248, 255))
@@ -922,6 +1144,14 @@ class Game:
             self.screen.blit(boss_text, (WIDTH // 2 - boss_text.get_width() // 2, 108))
 
     def handle_events(self):
+        """处理所有输入事件
+        
+        支持的输入方式：
+          - 键盘：WASD / 方向键（移动）、F（技能）、P（暂停）、H（菜单）、R（重开）
+          - 鼠标：拖动控制玩家移动、点击按钮
+          - 触摸（网页版）：FINGER 事件（手指拖动和点击）
+          - 滚轮：修改历史记录页码
+        """
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.save_current_run_if_needed()
@@ -1117,8 +1347,19 @@ class Game:
                     self.history_drag_start_y = None
 
     def cast_emp(self):
+        """攻击 EMP 技能
+        
+        功能：
+          1. 清除所有敌机子弹
+          2. 对所有敌机造成 2.4 倍的攻击伤害
+          3. 对玩家提供 1.1 秒无敌时间
+          4. 触发全屏轰炸效果
+          5. 清空连击计数
+        
+        技能冷却时间为 self.player.skill_cd，存儲在 self.player.skill_t 中
+        """
         if self.player.skill_t > 0:
-            return
+            return  # 技能在冷却中，无法使用
         self.player.skill_t = self.player.skill_cd
         self.player.invuln = max(self.player.invuln, 1.1)
 
@@ -1147,10 +1388,23 @@ class Game:
             self.pickups.append(Pickup(x, y, "heal"))
 
     def fire_player_bullets(self):
+        """根据弹道数发射子弹
+        
+        子弹排列方法：
+          - 所有子弹不同位置
+          - 相邓㞣弹道间为 12 像素
+          - 中心对称，把玩家处于最中间
+        
+        伤害流失：
+          - 5 道弹道时，每条子弹执行 90% 伤害（为了平衡
+          - 少于 5 道时全伤害
+        """
         lanes = max(1, min(5, self.player.bullet_lanes))
         center_x = self.player.x
         base_y = self.player.y - 20
         lane_gap = 12
+        # 弹道算法：用对称偏移生成多弹道，保证弹道围绕玩家中心均匀分布。
+        # 例如 3 道时偏移为 [-1,0,1] * lane_gap；5 道时为 [-2,-1,0,1,2] * lane_gap。
         start = -(lanes - 1) / 2
         dmg_scale = 0.9 if lanes >= 5 else 1.0
         for i in range(lanes):
@@ -1158,6 +1412,21 @@ class Game:
             self.player_bullets.append(Bullet(x, base_y, -620, self.player.attack * dmg_scale, True))
 
     def update_playing(self, dt):
+        """更新游戏进行中的所有逻辑
+        
+        包括：
+          1. 玩家移动和发射子弹
+          2. 敌机刷新和移动
+          3. 子弹更新和碰撞检测
+          4. 掉落物拾取
+          5. 敌机击杀判定和分数加成
+          6. 玩家升级判定
+          7. boss 生成和伤害
+          8. 游戏结束判定
+        
+        Args:
+            dt: 帧时间间隔（秒）
+        """
         self.survive_time += dt
         self.combo_t = max(0.0, self.combo_t - dt)
         if self.combo_t == 0:
@@ -1172,6 +1441,7 @@ class Game:
             self.player.x = max(28, min(WIDTH - 28, self.player.x))
             self.player.y = max(38, min(HEIGHT - 30, self.player.y))
 
+        # 难度曲线算法：刷怪冷却随生存时间线性缩短，并设置下限避免无穷增速。
         self.spawn_cd = max(0.2, 0.78 - self.survive_time * 0.012)
         self.spawn_t -= dt
         if self.spawn_t <= 0:
@@ -1207,6 +1477,7 @@ class Game:
                 e.shoot_t = e.shoot_cd
                 self.spawn_enemy_shot(e)
 
+        # 碰撞算法：对子弹和敌机做双层遍历，基于 pygame.Rect.colliderect 进行 AABB 判定。
         for b in self.player_bullets:
             if not b.alive:
                 continue
@@ -1282,6 +1553,18 @@ class Game:
             self.add_explosion(self.player.x, self.player.y, 48, (255, 115, 95))
 
     def draw_playing(self):
+        """绘制游戏进行中的整个画哨
+        
+        绘制顺序（前提敌机已经发射子弹）：
+          1. 背景与星空（需要在最上芝
+          2. 掉落物（增强可见性）
+          3. 玩家子弹
+          4. 敌机子弹
+          5. 爆炸效果粒子
+          6. 玩家飞机（需要在子弹之上）
+          7. HUD 信息（HP、技能、整个列表、打倒计数）
+          8. 网页端控制按钮（HOME、PAUSE、EMP）
+        """
         self.draw_background()
 
         for e in self.enemies:
@@ -1302,6 +1585,15 @@ class Game:
         self.draw_touch_ui()
 
     def draw_game_over(self):
+        """绘制游戏结束界面
+        
+        控件顺序：
+          1. 先绘制游戏画面
+          2. 背景
+          3. 显示 "GAME OVER" 标题
+          4. 打印 4 行统计：最终分数、击杀数、生存时间
+          5. 展示历史成绩模板
+        """
         self.draw_playing()
         self.game_over_timer += 1 / FPS
 
@@ -1327,6 +1619,15 @@ class Game:
         self.draw_history_panel(452, 120, self.tr("历史记录 TOP", "TOP SCORES"))
 
     def draw_pause_overlay(self):
+        """绘制暂停界面
+        
+        控件：
+          1. 先绘制游戏画面
+          2. 添加遮罩
+          3. 居中显示 "PAUSED" 标题
+          4. 指提玩家 P 继续、H 返菜单
+          5. 网页端控制按钮仍跳转
+        """
         self.draw_playing()
         mask = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         mask.fill((8, 10, 18, 165))
