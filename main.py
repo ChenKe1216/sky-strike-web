@@ -479,7 +479,7 @@ class Game:
         elif IS_WEB:
             print(f"[web-font] Using bundled CJK font: {os.path.basename(self.cjk_font_path)}")
         self.title_font = self.load_ui_font(48, bold=True, prefer_cjk=True)
-        self.menu_title_font = self.load_ui_font(34, bold=True, prefer_cjk=True)
+        self.menu_title_font = self.load_ui_font(28, bold=True, prefer_cjk=True)
         self.h1_font = self.load_ui_font(24, bold=True, prefer_cjk=True)
         self.ui_font = self.load_ui_font(22, prefer_cjk=True)
         self.small_font = self.load_ui_font(18, mono=True)
