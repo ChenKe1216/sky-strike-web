@@ -45,6 +45,7 @@ FPS = 50 if IS_WEB else 60
 RECORD_FILE = "records.json"
 MAX_RECORDS = 10
 FORCE_CHINESE_UI = True
+WEB_FONT_SCALE = 0.86
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 CJK_FONT_FILES = (
     os.path.join("assets", "fonts", "NotoSansSC-Regular.ttf"),
@@ -532,6 +533,9 @@ class Game:
         return None
 
     def load_ui_font(self, size, bold=False, prefer_cjk=False, mono=False):
+        if IS_WEB:
+            size = max(12, int(size * WEB_FONT_SCALE))
+
         if prefer_cjk and self.cjk_font_path is not None:
             font = pygame.font.Font(self.cjk_font_path, size)
             font.set_bold(bold)
@@ -792,6 +796,8 @@ class Game:
             pass
 
     def tr(self, zh, en):
+        if FORCE_CHINESE_UI:
+            return zh
         return en if self.ascii_ui else zh
 
     def render_small(self, text, color):
