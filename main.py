@@ -48,9 +48,11 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 CJK_FONT_FILES = (
     os.path.join("assets", "fonts", "NotoSansSC-Regular.ttf"),
     os.path.join("assets", "fonts", "NotoSansSC-Medium.ttf"),
+    os.path.join("assets", "fonts", "NotoSansCJKsc-Regular.otf"),
     os.path.join("assets", "fonts", "SourceHanSansSC-Regular.otf"),
     "NotoSansSC-Regular.ttf",
     "NotoSansSC-Medium.ttf",
+    "NotoSansCJKsc-Regular.otf",
     "SourceHanSansSC-Regular.otf",
 )
 
@@ -474,6 +476,8 @@ class Game:
         self.ascii_ui = IS_WEB and self.cjk_font_path is None
         if IS_WEB and self.cjk_font_path is None:
             print("[web-font] No bundled CJK font asset found; falling back to ASCII UI.")
+        elif IS_WEB:
+            print(f"[web-font] Using bundled CJK font: {os.path.basename(self.cjk_font_path)}")
         self.title_font = self.load_ui_font(48, bold=True, prefer_cjk=True)
         self.menu_title_font = self.load_ui_font(34, bold=True, prefer_cjk=True)
         self.h1_font = self.load_ui_font(24, bold=True, prefer_cjk=True)
