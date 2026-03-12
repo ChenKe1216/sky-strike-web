@@ -472,6 +472,8 @@ class Game:
 
         self.cjk_font_path = self.find_cjk_font_asset()
         self.ascii_ui = IS_WEB and self.cjk_font_path is None
+        if IS_WEB and self.cjk_font_path is None:
+            print("[web-font] No bundled CJK font asset found; falling back to ASCII UI.")
         self.title_font = self.load_ui_font(48, bold=True, prefer_cjk=True)
         self.menu_title_font = self.load_ui_font(34, bold=True, prefer_cjk=True)
         self.h1_font = self.load_ui_font(24, bold=True, prefer_cjk=True)
